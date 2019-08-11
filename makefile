@@ -13,4 +13,4 @@ clean:
 	rm -f obj/* out/*
 
 run:
-	./out/main
+	./out/main 
