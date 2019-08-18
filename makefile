@@ -1,10 +1,10 @@
-INC=-I../include/
-OBJ=obj/main.o
+INC=-Iinclude/
+OBJ=obj/main.o obj/sock.o
 
-all: clean build run
+all: clean build 
 
 build: $(OBJ)
-	gcc -o out/main $(OBJ)
+	gcc -o out/main $(OBJ) -lpthread
 
 obj/%.o: src/%.c
 	gcc $(INC) -c $< -o obj/$(@F)

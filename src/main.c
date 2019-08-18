@@ -1,62 +1,30 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stddef.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
 #include <string.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <errno.h>
 #include <unistd.h>
+#include <signal.h>
+#include <pthread.h>
+#include "sock.h"
+
+int create_thread(void *, int *);
+void *handle_connection(void *);
 
 int main(int argc, char *argv[])
 {
-  int status;
-  struct addrinfo *servinfo;
   struct addrinfo hints;
   memset(&hints, 0, sizeof hints);
   hints.ai_family = AF_UNSPEC;
   hints.ai_socktype = SOCK_STREAM;
   
-  // get address info for host using port 80, if param is not provided use
-  // loopback address
-  if ((status = getaddrinfo(argv[1], "http", &hints, &servinfo) != 0)) {
-    fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
+  // get socket listening on port 80 
+  int sock = get_socket(argv[1], "http", &hints, 5);
+  if (sock == -1) {
+    perror("error opening socket");
     exit(1);
-  }
-
-  char ipstr[INET6_ADDRSTRLEN];
-  struct addrinfo *p;
-  int sock;
-
-  // loop through list of structs and bind to the first one we can
-  for (p = servinfo; p != NULL; p = p->ai_next) {
-    sock = socket(servinfo->ai_family, servinfo->ai_socktype, servinfo->ai_protocol);
-    if (sock == -1) {
-      continue;
-    }
-    if (bind(sock, servinfo->ai_addr, servinfo->ai_addrlen) == -1) {
-      fprintf(stderr, "bind error: %s\n", gai_strerror(errno));
-      exit(1);  
-    }
-    break;
-  }
-  
-  freeaddrinfo(servinfo);
-
-  // check if we were unable to bind any sockets and exit program
-  if (p == NULL) {
-    fprintf(stderr, "failed to bind\n");
-    exit(1);
-  }
-
-  // setup the socket to start listening for incoming connections
-  // this will mark the socket as a listening socket which accept()
-  // can be called on and sets the maximum number of connections in the queue
-  if (listen(sock, 5) == -1) {
-    fprintf(stderr, "listen error: %s\n", gai_strerror(errno));
-    exit(1);  
   }
 
   socklen_t addr_size;
@@ -65,7 +33,7 @@ int main(int argc, char *argv[])
 
   // this is the main loop of the server. each iteration will
   // attempt to accept an incoming connection and send data through it
-  while(1) {
+  for (;;) {
     addr_size = sizeof their_addr;
     new_fd = accept(sock, (struct sockaddr *)&their_addr, &addr_size);
 
@@ -74,12 +42,43 @@ int main(int argc, char *argv[])
       continue;
     }
 
-    if (send(new_fd, "Hello", 5, 0) == -1) {
-      perror("error sending data");
+    if (create_thread(handle_connection, &new_fd) != 0) {
+      perror("unable to create a new thread");
+      close(new_fd);
     }
-
-    close(new_fd);
   }
 
   return 0;
 }
+
+int create_thread(void *func, int *new_fd)
+{
+  pthread_t thread_id;
+  return pthread_create(&thread_id, NULL, handle_connection, new_fd); 
+}
+
+void *handle_connection(void *args)
+{
+  int new_fd = *(int *)args;
+  char buf[1000];
+  int bytes = recv(new_fd, buf, 999, 0);
+  
+  if (bytes == -1) {
+    perror("error receiving bytes\n");
+    return NULL;
+  }
+
+  printf("got %d bytes\n", bytes);
+  buf[bytes] = '\0';
+
+  int sent = send(new_fd, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nHello", 43, 0);
+  if (sent == -1) {
+    perror("error sending bytes\n");
+    return NULL;
+  }
+
+  printf("sent %d bytes\n", sent);
+  close(new_fd);
+  return NULL;
+}
+
