@@ -8,8 +8,13 @@
 #include <unistd.h>
 #include <signal.h>
 #include <pthread.h>
+#include <time.h>
 #include "sock.h"
 
+#define BUF_SIZE 5
+#define TIMEOUT  60
+
+void print_error(int, char *);
 int create_thread(void *, int *);
 void *handle_connection(void *);
 
@@ -60,20 +65,55 @@ int create_thread(void *func, int *new_fd)
 void *handle_connection(void *args)
 {
   int new_fd = *(int *)args;
-  char buf[1000];
-  int bytes = recv(new_fd, buf, 999, 0);
-  
-  if (bytes == -1) {
-    perror("error receiving bytes\n");
+  int bytes, position = 0;
+  char buf[BUF_SIZE];
+  time_t start;
+  start = time(NULL);
+
+  char *message = (char *)malloc(8096 * sizeof(char));
+  if (message == NULL) {
+    printf("unable to allocate memory for request\n");
     return NULL;
   }
 
-  printf("got %d bytes\n", bytes);
-  buf[bytes] = '\0';
+  // keep getting bytes until error, closed or end of data detected
+  // otherwise keep waiting
+  while (1) {
+    // server timeout
+    if ((time(NULL) - start) > TIMEOUT) {
+      print_error(new_fd, "server timeout");
+      return NULL;
+    }
+   
+    bytes = recv(new_fd, buf, BUF_SIZE - 1, MSG_DONTWAIT);
+
+    // message was received
+    if (bytes > 0) {
+      for (int i = 0; i < bytes; ++i) {
+        message[position] = buf[i];
+        ++position;
+      } 
+    }
+
+    // connection was closed
+    if (bytes == 0) {
+      print_error(new_fd, "connection closed");
+      return NULL;
+    }
+    
+    // error occured, check if it's not a blocking error
+    if (bytes < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+      print_error(new_fd, "recv error");
+      return NULL;
+    } else if (message[position - 4] == '\r' && message[position - 3] == '\n' && message[position - 2] == '\r' && message[position - 1] == '\n') {
+      break;
+    }
+  }
 
   int sent = send(new_fd, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nHello", 43, 0);
+
   if (sent == -1) {
-    perror("error sending bytes\n");
+    print_error(new_fd, "error sending bytes");
     return NULL;
   }
 
@@ -82,3 +122,8 @@ void *handle_connection(void *args)
   return NULL;
 }
 
+void print_error(int sock, char *mes)
+{
+  perror(mes);
+  close(sock);
+}
