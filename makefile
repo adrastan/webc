@@ -1,5 +1,5 @@
 INC=-Iinclude/
-OBJ=obj/main.o obj/sock.o
+OBJ=obj/main.o obj/sock.o obj/message.o
 
 all: clean build 
 

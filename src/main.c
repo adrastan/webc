@@ -10,13 +10,20 @@
 #include <pthread.h>
 #include <time.h>
 #include "sock.h"
+#include "message.h"
 
-#define BUF_SIZE 5
+#define BUF_SIZE 8192
 #define TIMEOUT  60
+#define E_TIMEOUT 0
+#define E_CLOSED 1
+#define E_RECV 2
+#define E_MALLOC 3
 
-void print_error(int, char *);
 int create_thread(void *, int *);
 void *handle_connection(void *);
+int recv_all(int, char *, int); 
+int send_all(int, void *, size_t, int);
+struct request get_request(int);
 
 int main(int argc, char *argv[])
 {
@@ -56,36 +63,110 @@ int main(int argc, char *argv[])
   return 0;
 }
 
+// function to create a new thread for the new socket connection
 int create_thread(void *func, int *new_fd)
 {
   pthread_t thread_id;
   return pthread_create(&thread_id, NULL, handle_connection, new_fd); 
 }
 
+// function to handle incoming connections from client.
+// 1: attempt to get request message from client
+// 2: parse the request message
+// 3: send the response to the client
 void *handle_connection(void *args)
 {
+  // get socket related to the connection;
   int new_fd = *(int *)args;
-  int bytes, position = 0;
+
+  // create a new request structure which will eventually
+  // hold the request message and its length;
+  struct request req = get_request(new_fd);
+
+  if (!req.ok) {
+    // TODO check errno and send error response
+    close(new_fd);
+    return NULL; 
+  }
+  
+  printf("%s", req.message);
+
+  struct response res = get_response(req.message, req.length);
+  free(req.message);
+  req.message = NULL;
+
+  if (!res.ok) {
+    // TODO check errno and send error response
+    close(new_fd);
+    return NULL;
+  }
+
+  if (send_all(new_fd, res.message, res.length, 0) == -1) {
+    printf("error sending bytes\n");
+  }
+
+  //free(res.message);
+  close(new_fd);
+  return NULL;
+}
+
+struct request get_request(int new_fd)
+{
+  struct request req;
+  req.message = malloc(BUF_SIZE);
+  if (req.message == NULL) {
+    errno = 3;
+    req.ok = 0;
+    return req;
+  }
+  size_t bytes = recv_all(new_fd, req.message, MSG_DONTWAIT);
+  if (bytes == -1) {
+    free(req.message);
+    req.message = NULL;
+    req.ok = 0;
+    return req;
+  }
+  req.length = bytes;
+  req.ok = 1;
+  return req;
+}
+
+// send len bytes to socket descriptor. this function will
+// return 0 if it was successful otherwise it returns -1
+int send_all(int new_fd, void *message, size_t len, int flags)
+{
+  char *ptr = (char *) message;
+
+  while (len > 0) {
+    int i = send(new_fd, ptr, len, flags);
+    if (i < 1) {
+      return -1;
+    }
+    ptr += i;
+    len -= i;
+  }
+
+  return 0;
+}
+
+// receive all bytes from socket descriptor into message. this function
+// will return the number of bytes if it was successful otherwise it returns
+// -1
+int recv_all(int new_fd, char *message, int flags)
+{
+  int position = 0, bytes;
   char buf[BUF_SIZE];
   time_t start;
   start = time(NULL);
 
-  char *message = (char *)malloc(8096 * sizeof(char));
-  if (message == NULL) {
-    printf("unable to allocate memory for request\n");
-    return NULL;
-  }
-
-  // keep getting bytes until error, closed or end of data detected
-  // otherwise keep waiting
   while (1) {
     // server timeout
     if ((time(NULL) - start) > TIMEOUT) {
-      print_error(new_fd, "server timeout");
-      return NULL;
+      errno = 0;
+      return -1;
     }
-   
-    bytes = recv(new_fd, buf, BUF_SIZE - 1, MSG_DONTWAIT);
+
+    bytes = recv(new_fd, buf, BUF_SIZE - 1, flags);
 
     // message was received
     if (bytes > 0) {
@@ -97,33 +178,18 @@ void *handle_connection(void *args)
 
     // connection was closed
     if (bytes == 0) {
-      print_error(new_fd, "connection closed");
-      return NULL;
+      errno = 1;
+      return -1;
     }
-    
+
     // error occured, check if it's not a blocking error
     if (bytes < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-      print_error(new_fd, "recv error");
-      return NULL;
+      errno = 2;
+      return -1;
     } else if (message[position - 4] == '\r' && message[position - 3] == '\n' && message[position - 2] == '\r' && message[position - 1] == '\n') {
       break;
     }
   }
 
-  int sent = send(new_fd, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nHello", 43, 0);
-
-  if (sent == -1) {
-    print_error(new_fd, "error sending bytes");
-    return NULL;
-  }
-
-  printf("sent %d bytes\n", sent);
-  close(new_fd);
-  return NULL;
-}
-
-void print_error(int sock, char *mes)
-{
-  perror(mes);
-  close(sock);
+  return position;
 }
