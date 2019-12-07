@@ -89,8 +89,6 @@ void *handle_connection(void *args)
     return NULL; 
   }
   
-  printf("%s", req.message);
-
   struct response res = get_response(req.message, req.length);
   free(req.message);
   req.message = NULL;
@@ -124,10 +122,10 @@ struct request get_request(int new_fd)
     free(req.message);
     req.message = NULL;
     req.ok = 0;
-    return req;
+  } else {
+    req.length = bytes;
+    req.ok = 1;
   }
-  req.length = bytes;
-  req.ok = 1;
   return req;
 }
 

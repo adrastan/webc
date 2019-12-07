@@ -18,6 +18,10 @@ struct request
   int ok;
 };
 
-struct response get_response(char *req, size_t len);
+typedef struct response Response;
+typedef struct request Request;
+
+Response parse_request(char *, size_t);
+Response get_response(char *req, size_t len);
 
 #endif /* MESSAGE_H */
