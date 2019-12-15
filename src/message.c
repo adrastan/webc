@@ -18,12 +18,10 @@ Response get_response(char *message, size_t len)
 
 Response parse_request(char *message, size_t len)
 {
-  printf("parsing request message with length %d\n", len); 
-  
   char copy[len];
   strcpy(copy, message);
-
   char *token = strtok(message, " ");
+
   if (token == NULL) {
     return generate_response("400", "Bad Request"); 
   }
@@ -61,14 +59,14 @@ Response generate_response(char *status_code, char *reason_text)
   Response res;
   res.message = malloc(100);
   if (res.message == NULL) {
-    res.message = "HTTP/1.1 500 Internal Server Error\r\n";
+    res.message = "HTTP/1.1 500 Internal Server Error\r\nContent-length:0\r\n\r\n";
     res.ok = 1;
     return res;
   }
   strcpy(res.message, "HTTP/1.1 ");
   strcat(res.message, status_code);
   strcat(res.message, reason_text);
-  strcat(res.message, "\r\n");
+  strcat(res.message, "\r\nContent-length:0\r\n\r\n");
   res.length = strlen(res.message);
   res.ok = 1;
   return res;

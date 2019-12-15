@@ -13,7 +13,7 @@
 #include "message.h"
 
 #define BUF_SIZE 8192
-#define TIMEOUT  60
+#define TIMEOUT  10
 #define E_TIMEOUT 0
 #define E_CLOSED 1
 #define E_RECV 2
@@ -53,6 +53,7 @@ int main(int argc, char *argv[])
       fprintf(stderr, "accept error: %s\n", gai_strerror(errno));
       continue;
     }
+    printf("Accepting connection on socket %d\n", new_fd);
 
     if (create_thread(handle_connection, &new_fd) != 0) {
       perror("unable to create a new thread");
@@ -79,44 +80,63 @@ void *handle_connection(void *args)
   // get socket related to the connection;
   int new_fd = *(int *)args;
 
-  // create a new request structure which will eventually
-  // hold the request message and its length;
-  struct request req = get_request(new_fd);
+  printf("Started connection on socket %d on new thread\n", new_fd);
 
-  if (!req.ok) {
-    // TODO check errno and send error response
-    close(new_fd);
-    return NULL; 
+  while (1) {
+    printf("Getting request message from socket %d\n", new_fd);
+    // get the next request message from the socket
+    Request req = get_request(new_fd);
+
+    // there was a problem getting the request message
+    if (!req.ok) {
+      printf("Closing socket %d\n", new_fd);
+      close(new_fd);
+      return NULL; 
+    }
+    printf("Socket %d: %s", new_fd, req.message);
+
+    printf("Getting response message for socket %d\n", new_fd);
+    // parse the request message into the appropriate response
+    Response res = get_response(req.message, req.length);
+    free(req.message);
+    req.message = NULL;
+
+    if (!res.ok) {
+      // TODO check errno and send error response
+      close(new_fd);
+      return NULL;
+    }
+
+    printf("Sending response message to socket %d\n", new_fd);
+    // send all response bytes to the socket
+    if (send_all(new_fd, res.message, res.length, 0) == -1) {
+      close(new_fd);
+      return NULL;
+    }
+
+    // printf("Closing socket %d\n", new_fd);
+    // close(new_fd);
+    // return NULL;
   }
-  
-  struct response res = get_response(req.message, req.length);
-  free(req.message);
-  req.message = NULL;
-
-  if (!res.ok) {
-    // TODO check errno and send error response
-    close(new_fd);
-    return NULL;
-  }
-
-  if (send_all(new_fd, res.message, res.length, 0) == -1) {
-    printf("error sending bytes\n");
-  }
-
-  //free(res.message);
-  close(new_fd);
-  return NULL;
 }
 
-struct request get_request(int new_fd)
+// attempts to get message from the socket.
+// this can fail if:
+// 1: the server was unable to allocate memory for the message (close socket)
+// 2: the connection timed out (close the socket)
+// 3: the connection was closed (close the socket)
+// 4: recv returned -1 (close the socket)
+Request get_request(int new_fd)
 {
-  struct request req;
+  Request req;
   req.message = malloc(BUF_SIZE);
+
   if (req.message == NULL) {
     errno = 3;
     req.ok = 0;
     return req;
   }
+
   size_t bytes = recv_all(new_fd, req.message, MSG_DONTWAIT);
   if (bytes == -1) {
     free(req.message);
@@ -160,6 +180,7 @@ int recv_all(int new_fd, char *message, int flags)
   while (1) {
     // server timeout
     if ((time(NULL) - start) > TIMEOUT) {
+      printf("Socket %d timed out\n", new_fd);
       errno = 0;
       return -1;
     }
@@ -169,6 +190,9 @@ int recv_all(int new_fd, char *message, int flags)
     // message was received
     if (bytes > 0) {
       for (int i = 0; i < bytes; ++i) {
+        if (position == 0 && (buf[i] == '\r' || buf[i] == '\n')) {
+          continue; 
+        }
         message[position] = buf[i];
         ++position;
       } 
@@ -188,6 +212,6 @@ int recv_all(int new_fd, char *message, int flags)
       break;
     }
   }
-
+  message[position] = '\0';
   return position;
 }

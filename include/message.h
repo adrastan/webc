@@ -9,6 +9,7 @@ struct response
   char *message;
   char status[3];
   int ok;
+  int close;
 };
 
 struct request
@@ -16,6 +17,7 @@ struct request
   size_t length;
   char *message;
   int ok;
+  int close;
 };
 
 typedef struct response Response;
