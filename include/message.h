@@ -18,12 +18,18 @@ struct request
   char *message;
   int ok;
   int close;
+  char *method;
+  char *uri;
+  char *version;
+  char **headers;
+  char *body;
 };
 
 typedef struct response Response;
 typedef struct request Request;
 
-Response parse_request(char *, size_t);
-Response get_response(char *req, size_t len);
+Response parse_request(Request req);
+Response get_response(Request req);
+Response generate_response(char *, char *);
 
 #endif /* MESSAGE_H */
