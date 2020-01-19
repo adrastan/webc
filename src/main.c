@@ -25,9 +25,10 @@ void load_config(char *argv[], struct config *settings)
 
   settings->address = g_key_file_get_string(key_file, "Settings", "address", &error);
   settings->port = g_key_file_get_string(key_file, "Settings", "port", &error);
+  settings->max_connections = g_key_file_get_integer(key_file, "Settings", "max_connections", &error);
 }
 
 void load_config_defaults()
 {
-
+  return;
 }

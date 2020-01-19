@@ -8,7 +8,6 @@ struct response
   size_t length;
   char *message;
   char status[3];
-  int ok;
   int close;
 };
 
@@ -29,7 +28,7 @@ typedef struct response Response;
 typedef struct request Request;
 
 Response parse_request(Request req);
-Response get_response(Request req);
 Response generate_response(char *, char *);
+void process_headers(Request);
 
 #endif /* MESSAGE_H */

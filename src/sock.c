@@ -15,6 +15,9 @@
 #define MAX_GET_REQUEST_SIZE 8192
 #define TIMEOUT  10
 
+Request get_request(int);
+int get_start_of_body(char *, size_t);
+
 int get_socket(const char *address, const char *service, const struct addrinfo *hints, int max_connections)
 {
   int status, sock;
@@ -61,6 +64,57 @@ int get_socket(const char *address, const char *service, const struct addrinfo *
   return sock;
 }
 
+void send_response(int new_fd, Response res)
+{
+  if (!send_all(new_fd, res.message, res.length, 0)) {
+    res.close = 1;
+  }
+}
+
+Response get_response(int new_fd)
+{
+  Request req = get_request(new_fd);
+  Response res;
+
+  if (!req.ok) {
+    res.message = NULL;
+    res.close = 1;
+  } else {
+    res.message = "HTTP/1.1 200 OK\r\nContent-length:0\r\n\r\n";
+    res.length = strlen(res.message);
+    res.close = 0;
+  }
+  return res;
+}
+
+// attempts to get message from the socket.
+// this can fail if:
+// 1: the server was unable to allocate memory for the message (close socket)
+// 2: the connection timed out (close the socket)
+// 3: the connection was closed (close the socket)
+// 4: recv returned -1 (close the socket)
+Request get_request(int new_fd)
+{
+  Request req;
+  req.message = malloc(BUF_SIZE);
+
+  if (req.message == NULL) {
+    errno = 3;
+    req.ok = 0;
+    return req;
+  }
+
+  size_t bytes = recv_all(new_fd, req, MSG_DONTWAIT);
+  if (bytes == -1) {
+    free(req.message);
+    req.message = NULL;
+    req.ok = 0;
+  } else {
+    req.length = bytes;
+    req.ok = 1;
+  }
+  return req;
+}
 
 // send len bytes to socket descriptor. this function will
 // return 0 if it was successful otherwise it returns -1
@@ -80,28 +134,30 @@ int send_all(int new_fd, void *message, size_t len, int flags)
   return 0;
 }
 
-// receive all bytes from socket descriptor into message. this function
-// will return the number of bytes if it was successful otherwise it returns
-// -1
+// keep getting bytes from the socket until either
+// 1: timeout
+// 2: connection is closed
+// 3: there was an error
+// 4: \r\n\r\n is received
 int recv_all(int new_fd, Request req, int flags)
 {
   int position = 0, bytes, total_bytes = 0;
   char buf[BUF_SIZE];
-  time_t start;
-  start = time(NULL);
-  int buf_factor = 1;
+  time_t start = time(NULL);
+  int buf_factor = 1, start_of_body = 0, processed_headers = 0;
 
   while (1) {
-    // server timeout
+    // request is taking too long; abort
     if ((time(NULL) - start) > TIMEOUT) {
       printf("Socket %d timed out\n", new_fd);
       errno = ETIMEOUT;
       return -1;
     }
 
-    bytes = recv(new_fd, buf, BUF_SIZE - 1, flags);
+    bytes = recv(new_fd, buf, BUF_SIZE, flags);
 
-    if (position >= (BUF_SIZE - 1) * (buf_factor)) {
+    // increase req message size if bytes received doesn't fit
+    if (position >= (BUF_SIZE) * (buf_factor)) {
       char *new_message = (char *)realloc(req.message, (BUF_SIZE * (buf_factor + 1)));
       if (new_message == NULL) {
         return -1;
@@ -110,35 +166,51 @@ int recv_all(int new_fd, Request req, int flags)
       req.message = new_message;
     }
 
-    // message was received
+    // got bytes from socket
     if (bytes > 0) {
-      if ((total_bytes + bytes) > MAX_GET_REQUEST_SIZE) {
-        errno = EREQUEST_SIZE_EXCEEDED;
-        return -1;
-      }
       total_bytes += bytes;
-      // reset timer once we get some bytes
       start = time(NULL);
       position = read_bytes_into_message(position, req.message, buf, bytes);
     }
-    // connection was closed
+    // socket connection was closed 
     else if (bytes == 0) {
       printf("Closing socket %d\n", new_fd);
       errno = ECLOSED;
       return -1;
-    }
-    // error occured, check if it's not a blocking error
+    } 
+    // there was an error
     else if (bytes < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
       return -1;
     }
 
-    if (req.message[position - 4] == '\r' && req.message[position - 3] == '\n' && req.message[position - 2] == '\r' && req.message[position - 1] == '\n') {
+    if (!start_of_body) {
+      start_of_body = get_start_of_body(req.message, total_bytes);
+    }
+
+    if (start_of_body && !processed_headers) {
+      process_headers(req);
+      processed_headers = 1;
+    }
+
+    if (start_of_body && start_of_body <= total_bytes - 1) {
+      //theres a body
+    }
+    else if (start_of_body) {
       break;
     }
   }
 
-  req.message[position] = '\0';
-  return position;
+  return total_bytes;
+}
+
+int get_start_of_body(char *message, size_t len)
+{
+  for (int i = 0; i < len; ++i) {
+    if (message[i - 3] == '\r' && message[i - 2] == '\n' && message[i - 1] == '\r' && message[i] == '\n') {
+      return i + 1;
+    }
+  }
+  return 0;
 }
 
 int read_bytes_into_message(int position, char *message, char *buf, int bytes)

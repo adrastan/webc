@@ -4,6 +4,7 @@
 struct config {
   char *address;
   char *port;
+  int max_connections;
   size_t max_post;
 };
 
