@@ -20,15 +20,16 @@ struct request
   char *method;
   char *uri;
   char *version;
-  char **headers;
+  char *headers[100];
+  int header_count;
   char *body;
 };
 
 typedef struct response Response;
 typedef struct request Request;
 
-Response parse_request(Request req);
-Response generate_response(char *, char *);
-void process_headers(Request);
+char * get_next_line(char *, size_t);
+void process_headers(Request, size_t);
+Response get_response_message(Request);
 
 #endif /* MESSAGE_H */

@@ -77,15 +77,14 @@ Response get_response(int new_fd)
   Response res;
 
   if (!req.ok) {
-    res.message = NULL;
+    res.message = "HTTP/1.1 400 Bad Request\r\nContent-length:0\r\n\r\n";
     res.close = 1;
   } else {
-    res.message = "HTTP/1.1 200 OK\r\nContent-length:0\r\n\r\n";
-    res.length = strlen(res.message);
-    res.close = 0;
+    res = get_response_message(req);
   }
   return res;
 }
+
 
 // attempts to get message from the socket.
 // this can fail if:
@@ -188,14 +187,16 @@ int recv_all(int new_fd, Request req, int flags)
     }
 
     if (start_of_body && !processed_headers) {
-      process_headers(req);
+      process_headers(req, start_of_body);
       processed_headers = 1;
     }
 
     if (start_of_body && start_of_body <= total_bytes - 1) {
-      //theres a body
+      req.body = &req.message[start_of_body];
+      break;
     }
     else if (start_of_body) {
+      req.body = NULL;
       break;
     }
   }
